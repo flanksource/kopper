@@ -22,6 +22,7 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/flanksource/duty/types"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -94,7 +95,7 @@ func (in *ConnectionSpec) DeepCopyInto(out *ConnectionSpec) {
 	in.Certificate.DeepCopyInto(&out.Certificate)
 	if in.Properties != nil {
 		in, out := &in.Properties, &out.Properties
-		*out = make(map[string]string, len(*in))
+		*out = make(types.JSONStringMap, len(*in))
 		for key, val := range *in {
 			(*out)[key] = val
 		}
