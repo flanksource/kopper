@@ -15,39 +15,79 @@ jobs:
     outputs:
       release-version: ${{ steps.semantic.outputs.release-version }}
       new-release-published: ${{ steps.semantic.outputs.new-release-published }}
-# bump-clients:
-#   runs-on: ubuntu-latest
-#   needs: [semantic-release]
-#   if: needs.semantic-release.outputs.new-release-published == 'true'
-#   strategy:
-#     matrix:
-#       repos: ['incident-commander', 'canary-checker', 'config-db', 'apm-hub']
-#   steps:
-#     - uses: actions/checkout@v3
-#       with:
-#         repository: flanksource/${{ matrix.repos }}
-#         token: ${{ secrets.FLANKBOT }}
-#     - name: Setup Go
-#       uses: actions/setup-go@v4
-#       with:
-#         go-version: v1.20.x
-#     - name: Create commits
-#       run: |
-#         # Sleep to let index refresh
-#         sleep 60
-#         go get github.com/flanksource/kopper@v${{ needs.semantic-release.outputs.release-version }}
-#         go mod tidy
-#         if [ -d "hack/generate-schemas" ]; then
-#           cd hack/generate-schemas && go mod tidy
-#         fi
 
-#     - name: Create Pull Request
-#       uses: peter-evans/create-pull-request@v4
-#       with:
-#         branch: 'bump-kopper-auto-pr'
-#         commit-message: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-#         title: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-#         committer: 'Flankbot <flankbot@users.noreply.github.com>'
-#         token: ${{ secrets.FLANKBOT }}
-#         labels: dependencies
-#         delete-branch: true
+  helm:
+    runs-on: ubuntu-latest
+    needs: [semantic-release]
+    if: needs.semantic-release.outputs.new-release-published == 'true'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set version
+        run: |
+          git fetch --prune --unshallow
+          echo "RELEASE_VERSION=$(git describe --abbrev=0 --tags | sed -e 's/^v//')" >> $GITHUB_ENV
+      - name: Update app version
+        uses: mikefarah/yq@master
+        with:
+          cmd: yq -i e '(.version = "${{ env.RELEASE_VERSION }}") | (.appVersion = "${{ env.RELEASE_VERSION }}")' chart/Chart.yaml
+      - name: Set up Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.8.0
+      - name: Package Helm chart
+        run: |
+          helm package ./chart
+      - name: Clone charts repo
+        uses: actions/checkout@v3
+        with:
+          repository: "${{ github.repository_owner }}/charts"
+          path: charts
+          token: "${{ secrets.FLANKBOT }}"
+      - name: Update chart repo
+        run: |
+          cd charts
+          cp ../kopper-*.tgz ./
+          helm repo index --merge index.yaml .
+      - name: Push changes to chart repo
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Release ${{ needs.semantic-release.outputs.release-version }} of ${{ github.repository }}"
+          branch: gh-pages
+          repository: ./charts
+
+  bump-clients:
+    runs-on: ubuntu-latest
+    needs: [semantic-release]
+    if: needs.semantic-release.outputs.new-release-published == 'true'
+    strategy:
+      matrix:
+        repos: ['incident-commander']
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository: flanksource/${{ matrix.repos }}
+          token: ${{ secrets.FLANKBOT }}
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: v1.20.x
+      - name: Create commits
+        run: |
+          # Sleep to let index refresh
+          sleep 60
+          go get github.com/flanksource/kopper@v${{ needs.semantic-release.outputs.release-version }}
+          go mod tidy
+          if [ -d "hack/generate-schemas" ]; then
+            cd hack/generate-schemas && go mod tidy
+          fi
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v4
+        with:
+          branch: 'bump-kopper-auto-pr'
+          commit-message: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
+          title: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
+          committer: 'Flankbot <flankbot@users.noreply.github.com>'
+          token: ${{ secrets.FLANKBOT }}
+          labels: dependencies
+          delete-branch: true
