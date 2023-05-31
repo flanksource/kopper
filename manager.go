@@ -12,11 +12,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-
-	"github.com/flanksource/commons/collections"
-	missioncontrolv1 "github.com/flanksource/kopper/api/v1"
-	"github.com/flanksource/kopper/controllers"
-	//+kubebuilder:scaffold:imports
 )
 
 var (
@@ -25,22 +20,20 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
-	utilruntime.Must(missioncontrolv1.AddToScheme(scheme))
 }
 
 type ManagerOptions struct {
-	MetricsBindAddress     string
-	LeaderElectionID       string
-	Reconcilers            []string
-	ConnectionOnUpsertFunc func(missioncontrolv1.Connection) error
-	ConnectionOnDeleteFunc func(string) error
+	MetricsBindAddress string
+	LeaderElectionID   string
+	AddToSchemeFunc    func(*runtime.Scheme) error
 }
 
 func Manager(opts *ManagerOptions) (manager.Manager, error) {
 	if opts == nil {
 		opts = &ManagerOptions{}
 	}
+
+	utilruntime.Must(opts.AddToSchemeFunc(scheme))
 	// Use options for reconciling setup
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
@@ -62,21 +55,6 @@ func Manager(opts *ManagerOptions) (manager.Manager, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("error setting up manager: %w", err)
-	}
-
-	if len(opts.Reconcilers) == 0 {
-		return nil, fmt.Errorf("no reconcilers given")
-	}
-
-	if collections.Contains(opts.Reconcilers, "Connection") {
-		if err = (&controllers.ConnectionReconciler{
-			Client:       mgr.GetClient(),
-			Scheme:       mgr.GetScheme(),
-			OnUpsertFunc: opts.ConnectionOnUpsertFunc,
-			OnDeleteFunc: opts.ConnectionOnDeleteFunc,
-		}).SetupWithManager(mgr); err != nil {
-			return nil, fmt.Errorf("unable to create controller for Connection: %v", err)
-		}
 	}
 
 	return mgr, nil
