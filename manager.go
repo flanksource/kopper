@@ -23,9 +23,8 @@ func init() {
 }
 
 type ManagerOptions struct {
-	MetricsBindAddress string
-	LeaderElectionID   string
-	AddToSchemeFunc    func(*runtime.Scheme) error
+	LeaderElectionID string
+	AddToSchemeFunc  func(*runtime.Scheme) error
 }
 
 func Manager(opts *ManagerOptions) (manager.Manager, error) {
@@ -37,7 +36,7 @@ func Manager(opts *ManagerOptions) (manager.Manager, error) {
 	// Use options for reconciling setup
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
-		MetricsBindAddress: opts.MetricsBindAddress,
+		MetricsBindAddress: "0",
 		Port:               9443,
 		LeaderElection:     len(opts.LeaderElectionID) > 0,
 		LeaderElectionID:   opts.LeaderElectionID,
