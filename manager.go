@@ -5,6 +5,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	//"github.com/go-logr/logr"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,6 +13,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrlMetrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 var (
@@ -33,13 +35,15 @@ func Manager(opts *ManagerOptions) (manager.Manager, error) {
 	}
 
 	utilruntime.Must(opts.AddToSchemeFunc(scheme))
-	// Use options for reconciling setup
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: "0",
-		Port:               9443,
-		LeaderElection:     len(opts.LeaderElectionID) > 0,
-		LeaderElectionID:   opts.LeaderElectionID,
+		Scheme:           scheme,
+		LeaderElection:   len(opts.LeaderElectionID) > 0,
+		LeaderElectionID: opts.LeaderElectionID,
+		//Logger:           logr.Discard(),
+		Metrics: ctrlMetrics.Options{
+			BindAddress: "0",
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
