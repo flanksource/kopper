@@ -82,6 +82,11 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
+	if err := r.Status().Update(r.DutyContext, obj); err != nil {
+		logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
+	}
+
 	logger.Infof("[kopper] upserted %s", resourceName)
 	return ctrl.Result{}, nil
 
