@@ -17,9 +17,9 @@ import (
 func SetupReconciler[T any, PT interface {
 	*T
 	client.Object
-}](ctx context.Context, mgr ctrl.Manager, OnUpsertFunc func(context.Context, PT) error, OnDeleteFunc func(context.Context, string) error, finalizer string) error {
+}](ctx context.Context, mgr ctrl.Manager, OnUpsertFunc func(context.Context, PT) error, OnDeleteFunc func(context.Context, string) error, finalizer string) (Reconciler[T, PT], error) {
 	if finalizer == "" {
-		return fmt.Errorf("field Finalizer cannot be empty")
+		return Reconciler[T, PT]{}, fmt.Errorf("field Finalizer cannot be empty")
 	}
 
 	r := Reconciler[T, PT]{
@@ -31,7 +31,11 @@ func SetupReconciler[T any, PT interface {
 		Finalizer:    finalizer,
 	}
 
-	return r.SetupWithManager(mgr)
+	if err := r.SetupWithManager(mgr); err != nil {
+		return Reconciler[T, PT]{}, fmt.Errorf("error setting up manager: %w", err)
+	}
+
+	return r, nil
 }
 
 type Reconciler[T any, PT interface {
