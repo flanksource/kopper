@@ -14,6 +14,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// Custom Resources that uses "status" subresource
+// must implement this interface.
+type StatusPatchGenerator interface {
+	GenerateStatusPatch(previousState runtime.Object) client.Patch
+}
+
 func SetupReconciler[T any, PT interface {
 	*T
 	client.Object
@@ -61,10 +67,12 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	original := obj.DeepCopyObject()
+
 	resourceName := fmt.Sprintf("%s[%s]", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetUID())
 
 	if !obj.GetDeletionTimestamp().IsZero() {
-		logger.Infof("[kopper] deleting %s", resourceName)
+		logger.V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
 			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
@@ -86,14 +94,24 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
-	if err := r.Status().Update(r.DutyContext, obj); err != nil {
-		logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
-		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
+	if mgr, ok := any(obj).(StatusPatchGenerator); ok {
+		if patch := mgr.GenerateStatusPatch(original); patch != nil {
+			if err := r.Status().Patch(r.DutyContext, obj, patch); err != nil {
+				logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+				return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
+			}
+		}
+	} else {
+		// TODO: only for backward compatibility
+		// remove later ..
+		if err := r.Status().Update(r.DutyContext, obj); err != nil {
+			logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
+		}
 	}
 
-	logger.Infof("[kopper] upserted %s", resourceName)
+	logger.V(2).Infof("[kopper] upserted %s", resourceName)
 	return ctrl.Result{}, nil
-
 }
 
 // SetupWithManager sets up the controller with the Manager.
