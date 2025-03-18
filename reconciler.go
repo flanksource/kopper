@@ -111,10 +111,11 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 			if err := r.OnConflictFunc(r.DutyContext, obj); err != nil {
 				logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
-				return ctrl.Result{}, err // retry immediately
+				return ctrl.Result{Requeue: true, RequeueAfter: time.Minute * 5}, err
 			}
 
-			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 5}, err // immediately retry
+			// after successful deletion, retry after a short delay
+			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 15}, err
 		}
 
 		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
