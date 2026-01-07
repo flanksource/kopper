@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -50,6 +51,7 @@ func SetupReconciler[T any, PT interface {
 		OnDeleteFunc:   onDelete,
 		OnConflictFunc: onConflict,
 		Finalizer:      finalizer,
+		Events:         mgr.GetEventRecorderFor(finalizer),
 	}
 
 	if err := r.SetupWithManager(mgr); err != nil {
@@ -70,6 +72,7 @@ type Reconciler[T any, PT interface {
 	OnDeleteFunc   OnDeleteFunc
 	OnConflictFunc OnConflictFunc[PT]
 	Finalizer      string
+	Events         record.EventRecorder
 }
 
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -85,7 +88,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	original := obj.DeepCopyObject()
 
-	resourceName := fmt.Sprintf("%s[%s]", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetUID())
+	resourceName := fmt.Sprintf("%s[%s/%s:%s]", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), obj.GetUID())
 
 	if !obj.GetDeletionTimestamp().IsZero() {
 		logger.V(2).Infof("[kopper] deleting %s", resourceName)
@@ -94,6 +97,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		controllerutil.RemoveFinalizer(obj, r.Finalizer)
+		r.Events.Event(obj, "Normal", "Deleted", fmt.Sprintf("Deleted %s", resourceName))
 		return ctrl.Result{}, r.Update(ctx, obj)
 	}
 
@@ -103,6 +107,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 			logger.Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
+		r.Events.Event(obj, "Normal", "Created", fmt.Sprintf("Created %s", resourceName))
 	}
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
