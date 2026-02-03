@@ -11,10 +11,13 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -73,22 +76,32 @@ type Reconciler[T any, PT interface {
 	OnConflictFunc OnConflictFunc[PT]
 	Finalizer      string
 	Events         record.EventRecorder
+	// gvk is the GroupVersionKind of the resource being reconciled.
+	gvk schema.GroupVersionKind
 }
 
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
-	obj := PT(new(T))
+	raw := &unstructured.Unstructured{}
+	raw.SetGroupVersionKind(r.gvk)
 
-	err := r.Get(ctx, req.NamespacedName, obj)
-	if err != nil {
+	if err := r.Get(ctx, req.NamespacedName, raw); err != nil {
 		if apiErrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	original := obj.DeepCopyObject()
+	resourceName := fmt.Sprintf("%s[%s/%s:%s]", r.gvk.Kind, req.Namespace, req.Name, raw.GetUID())
 
-	resourceName := fmt.Sprintf("%s[%s/%s:%s]", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), obj.GetUID())
+	obj := PT(new(T))
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, obj); err != nil {
+		logger.Errorf("[kopper] malformed resource %s, skipping: %v", resourceName, err)
+		r.Events.Event(raw, "Warning", "MalformedResource",
+			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
+		return ctrl.Result{}, nil
+	}
+
+	original := obj.DeepCopyObject()
 
 	if !obj.GetDeletionTimestamp().IsZero() {
 		logger.V(2).Infof("[kopper] deleting %s", resourceName)
@@ -148,10 +161,26 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 }
 
 // SetupWithManager sets up the controller with the Manager.
+//
+// Resources are watched as Unstructured to ensure cache synchronization succeeds
+// even when some resources have specs that don't match the Go type definitions.
+// Malformed resources are detected during the Unstructured-to-typed conversion
+// in Reconcile(), where they can be handled gracefully with a warning event
+// rather than crashing the controller.
 func (r *Reconciler[T, PT]) SetupWithManager(mgr ctrl.Manager) error {
 	pObj := PT(new(T))
+
+	gvk, err := apiutil.GVKForObject(pObj, mgr.GetScheme())
+	if err != nil {
+		return fmt.Errorf("failed to get GVK for object: %w", err)
+	}
+	r.gvk = gvk
+
+	raw := &unstructured.Unstructured{}
+	raw.SetGroupVersionKind(gvk)
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(pObj).
+		For(raw).
 		Complete(r)
 }
 
