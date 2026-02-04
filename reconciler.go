@@ -76,8 +76,7 @@ type Reconciler[T any, PT interface {
 	OnConflictFunc OnConflictFunc[PT]
 	Finalizer      string
 	Events         record.EventRecorder
-	// gvk is the GroupVersionKind of the resource being reconciled.
-	gvk schema.GroupVersionKind
+	gvk            schema.GroupVersionKind
 }
 
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -95,10 +94,10 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	obj := PT(new(T))
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, obj); err != nil {
-		logger.Errorf("[kopper] malformed resource %s, skipping: %v", resourceName, err)
+		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
 		r.Events.Event(raw, "Warning", "MalformedResource",
 			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, fmt.Errorf("failed to convert unstructured to typed object: %w", err)
 	}
 
 	original := obj.DeepCopyObject()
