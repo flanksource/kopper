@@ -7,8 +7,36 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flanksource/commons/logger"
 	"github.com/go-logr/logr"
 )
+
+func TestShiftLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    slog.Level
+		expected slog.Level
+	}{
+		{"slog Error maps to commons Warn", slog.LevelError, slog.LevelWarn},
+		{"slog Warn maps to commons Info", slog.LevelWarn, slog.LevelInfo},
+		{"slog Info maps to commons Debug", slog.LevelInfo, slog.LevelDebug},
+		{"slog Debug maps to commons Trace", slog.LevelDebug, logger.SlogTraceLevel},
+		{"slog V(1) maps to commons Trace", slog.Level(-1), logger.SlogTraceLevel},
+		{"slog V(2) maps to commons Trace", slog.Level(-2), logger.SlogTraceLevel},
+		{"slog V(3) maps to commons Trace", slog.Level(-3), logger.SlogTraceLevel},
+		{"below slog Debug maps to below Trace", slog.Level(-5), logger.SlogTraceLevel - 1},
+		{"far below slog Debug maps to deep Trace", slog.Level(-6), logger.SlogTraceLevel - 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := shiftLevel(tt.input)
+			if result != tt.expected {
+				t.Errorf("shiftLevel(%d) = %d, want %d", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
 
 func TestLevelShiftHandler(t *testing.T) {
 	tests := []struct {
@@ -47,7 +75,7 @@ func TestLevelShiftHandler(t *testing.T) {
 		},
 		{
 			name:         "V(1) shifted to trace, base at trace level",
-			baseLevel:    slog.LevelDebug - 1, // trace level
+			baseLevel:    logger.SlogTraceLevel,
 			logFunc:      func(l logr.Logger) { l.V(1).Info("debug message") },
 			expectLogged: true,
 		},
@@ -121,6 +149,18 @@ func TestLevelShiftHandlerEnabled(t *testing.T) {
 			testLevel: slog.LevelError,
 			expected:  false,
 		},
+		{
+			name:      "debug enabled when base is trace (debug shifts to trace)",
+			baseLevel: logger.SlogTraceLevel,
+			testLevel: slog.LevelDebug,
+			expected:  true,
+		},
+		{
+			name:      "debug disabled when base is debug (debug shifts to trace)",
+			baseLevel: slog.LevelDebug,
+			testLevel: slog.LevelDebug,
+			expected:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -133,7 +173,7 @@ func TestLevelShiftHandlerEnabled(t *testing.T) {
 			result := handler.Enabled(context.Background(), tt.testLevel)
 			if result != tt.expected {
 				t.Errorf("Enabled(%v) = %v, want %v (base level: %v, shifted: %v)",
-					tt.testLevel, result, tt.expected, tt.baseLevel, tt.testLevel+slogLevelShift)
+					tt.testLevel, result, tt.expected, tt.baseLevel, shiftLevel(tt.testLevel))
 			}
 		})
 	}

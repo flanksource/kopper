@@ -8,13 +8,28 @@ import (
 	"github.com/go-logr/logr"
 )
 
-// slogLevelShift is the amount to shift slog levels by when adapting
-// controller-runtime logs to flanksource/commons/logger levels.
-// A shift of -4 maps:
-//   - controller-runtime Error (slog 8) → commons Warn (slog 4)
-//   - controller-runtime Info/V(0) (slog 0) → commons Debug (slog -4)
-//   - controller-runtime V(1) (slog -1) → commons Trace (slog -5)
-const slogLevelShift = slog.Level(-4)
+// shiftLevel maps slog levels from controller-runtime conventions to
+// flanksource/commons/logger conventions, shifting each level down by
+// one semantic step:
+//
+//	slog Error (8)          → commons Warn  (slog 4)
+//	slog Warn  (4)          → commons Info  (slog 0)
+//	slog Info  (0)          → commons Debug (slog -4)
+//	slog Debug (-4) & below → commons Trace (slog -5) & below
+func shiftLevel(level slog.Level) slog.Level {
+	switch {
+	case level >= slog.LevelError:
+		return slog.LevelWarn
+	case level >= slog.LevelWarn:
+		return slog.LevelInfo
+	case level >= slog.LevelInfo:
+		return slog.LevelDebug
+	case level >= slog.LevelDebug:
+		return logger.SlogTraceLevel
+	default:
+		return logger.SlogTraceLevel + (level - slog.LevelDebug)
+	}
+}
 
 // levelShiftHandler wraps an slog.Handler and shifts all log levels down
 // so that controller-runtime logs are mapped to appropriate commons/logger levels.
@@ -23,11 +38,11 @@ type levelShiftHandler struct {
 }
 
 func (h *levelShiftHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.handler.Enabled(ctx, level+slogLevelShift)
+	return h.handler.Enabled(ctx, shiftLevel(level))
 }
 
 func (h *levelShiftHandler) Handle(ctx context.Context, record slog.Record) error {
-	record.Level = record.Level + slogLevelShift
+	record.Level = shiftLevel(record.Level)
 	return h.handler.Handle(ctx, record)
 }
 
