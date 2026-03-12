@@ -5,6 +5,8 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"github.com/flanksource/commons/logger"
+	"github.com/flanksource/commons/properties"
 	"github.com/go-logr/logr"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -36,6 +38,12 @@ func Manager(opts *ManagerOptions) (manager.Manager, error) {
 	}
 
 	utilruntime.Must(opts.AddToSchemeFunc(scheme))
+
+	// Initialize flanksource/commons/logger with default error level for kopper
+	logger.UseSlog()
+	if properties.String("", "log.level.kopper") == "" {
+		properties.Set("log.level.kopper", "error")
+	}
 
 	logf.SetLogger(logr.Discard())
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{

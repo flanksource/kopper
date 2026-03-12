@@ -94,7 +94,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	obj := PT(new(T))
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, obj); err != nil {
-		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
+		logger.GetLogger("kopper").Errorf("[kopper] malformed resource %s: %v", resourceName, err)
 		r.Events.Event(raw, "Warning", "MalformedResource",
 			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
 		return ctrl.Result{}, fmt.Errorf("failed to convert unstructured to typed object: %w", err)
@@ -103,9 +103,9 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	original := obj.DeepCopyObject()
 
 	if !obj.GetDeletionTimestamp().IsZero() {
-		logger.V(2).Infof("[kopper] deleting %s", resourceName)
+		logger.GetLogger("kopper").V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
-			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
+			logger.GetLogger("kopper").Errorf("[kopper] failed to delete %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		controllerutil.RemoveFinalizer(obj, r.Finalizer)
@@ -116,7 +116,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	if !controllerutil.ContainsFinalizer(obj, r.Finalizer) {
 		controllerutil.AddFinalizer(obj, r.Finalizer)
 		if err := r.Update(ctx, obj); err != nil {
-			logger.Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
+			logger.GetLogger("kopper").Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		r.Events.Event(obj, "Normal", "Created", fmt.Sprintf("Created %s", resourceName))
@@ -124,10 +124,10 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
 		if isUniqueConstraintError(err) && r.OnConflictFunc != nil {
-			logger.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
+			logger.GetLogger("kopper").V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
 
 			if err := r.OnConflictFunc(r.DutyContext, obj); err != nil {
-				logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
+				logger.GetLogger("kopper").Errorf("[kopper] failed to delete %s: %v", resourceName, err)
 				return ctrl.Result{Requeue: true, RequeueAfter: time.Minute * 5}, err
 			}
 
@@ -135,14 +135,14 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 15}, err
 		}
 
-		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
+		logger.GetLogger("kopper").Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
 	if mgr, ok := any(obj).(StatusPatchGenerator); ok {
 		if patch := mgr.GenerateStatusPatch(original); patch != nil {
 			if err := r.Status().Patch(r.DutyContext, obj, patch); err != nil {
-				logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+				logger.GetLogger("kopper").Errorf("[kopper] failed to update status %s: %v", resourceName, err)
 				return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 			}
 		}
@@ -150,12 +150,12 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		// TODO: only for backward compatibility
 		// remove later ..
 		if err := r.Status().Update(r.DutyContext, obj); err != nil {
-			logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+			logger.GetLogger("kopper").Errorf("[kopper] failed to update status %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 	}
 
-	logger.V(2).Infof("[kopper] upserted %s", resourceName)
+	logger.GetLogger("kopper").V(2).Infof("[kopper] upserted %s", resourceName)
 	return ctrl.Result{}, nil
 }
 
