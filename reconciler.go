@@ -81,6 +81,8 @@ type Reconciler[T any, PT interface {
 }
 
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger.V(2).Infof("[kopper] reconciling gvk=%s namespacedName=%s", r.gvk.String(), req.NamespacedName)
+
 	raw := &unstructured.Unstructured{}
 	raw.SetGroupVersionKind(r.gvk)
 
