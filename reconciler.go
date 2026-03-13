@@ -2,7 +2,6 @@ package kopper
 
 import (
 	gocontext "context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -95,15 +94,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	resourceName := fmt.Sprintf("%s[%s/%s:%s]", r.gvk.Kind, req.Namespace, req.Name, raw.GetUID())
 
 	obj := PT(new(T))
-	payload, err := json.Marshal(raw.Object)
-	if err != nil {
-		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
-		r.Events.Event(raw, "Warning", "MalformedResource",
-			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
-		return ctrl.Result{}, fmt.Errorf("failed to marshal unstructured resource: %w", err)
-	}
-
-	if err := json.Unmarshal(payload, obj); err != nil {
+	if err := fromUnstructured(raw.Object, obj); err != nil {
 		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
 		r.Events.Event(raw, "Warning", "MalformedResource",
 			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
@@ -194,6 +185,17 @@ func (r *Reconciler[T, PT]) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(raw).
 		Complete(r)
+}
+
+// fromUnstructured converts an unstructured object to a typed object,
+// recovering from any panics that may occur during conversion.
+func fromUnstructured(u map[string]any, obj any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic converting unstructured object: %v", r)
+		}
+	}()
+	return runtime.DefaultUnstructuredConverter.FromUnstructured(u, obj)
 }
 
 func isUniqueConstraintError(err error) bool {
