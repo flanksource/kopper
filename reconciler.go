@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/duty/context"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/samber/lo"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -113,13 +114,14 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.Update(ctx, obj)
 	}
 
+	isCreated := false
 	if !controllerutil.ContainsFinalizer(obj, r.Finalizer) {
 		controllerutil.AddFinalizer(obj, r.Finalizer)
 		if err := r.Update(ctx, obj); err != nil {
 			logger.Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
-		r.Events.Event(obj, "Normal", "Created", fmt.Sprintf("Created %s", resourceName))
+		isCreated = true
 	}
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
@@ -155,7 +157,9 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		}
 	}
 
-	logger.V(2).Infof("[kopper] upserted %s", resourceName)
+	action := lo.Ternary(isCreated, "Created", "Updated")
+	logger.V(2).Infof("[kopper] %s %s", action, resourceName)
+	r.Events.Event(obj, "Normal", action, fmt.Sprintf("%s %s", action, resourceName))
 	return ctrl.Result{}, nil
 }
 
