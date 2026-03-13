@@ -2,6 +2,7 @@ package kopper
 
 import (
 	gocontext "context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -94,7 +95,15 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	resourceName := fmt.Sprintf("%s[%s/%s:%s]", r.gvk.Kind, req.Namespace, req.Name, raw.GetUID())
 
 	obj := PT(new(T))
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, obj); err != nil {
+	payload, err := json.Marshal(raw.Object)
+	if err != nil {
+		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
+		r.Events.Event(raw, "Warning", "MalformedResource",
+			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
+		return ctrl.Result{}, fmt.Errorf("failed to marshal unstructured resource: %w", err)
+	}
+
+	if err := json.Unmarshal(payload, obj); err != nil {
 		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
 		r.Events.Event(raw, "Warning", "MalformedResource",
 			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
