@@ -28,6 +28,14 @@ type StatusPatchGenerator interface {
 	GenerateStatusPatch(previousState runtime.Object) client.Patch
 }
 
+// ReconcileStatusSetter allows a CRD to update its own status when a reconcile
+// operation fails. Kopper will call the appropriate method and write the status
+// back to Kubernetes automatically.
+type ReconcileStatusSetter interface {
+	SetUpsertErrorStatus(err error)
+	SetDeleteErrorStatus(err error)
+}
+
 // OnUpsertFunc is a function that is called when a resource is created or updated
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
 
@@ -80,6 +88,24 @@ type Reconciler[T any, PT interface {
 	gvk            schema.GroupVersionKind
 }
 
+func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName string, obj PT, original runtime.Object) error {
+	if mgr, ok := any(obj).(StatusPatchGenerator); ok {
+		if patch := mgr.GenerateStatusPatch(original); patch != nil {
+			if err := r.Status().Patch(ctx, obj, patch); err != nil {
+				logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+				return err
+			}
+		}
+	} else {
+		if err := r.Status().Update(ctx, obj); err != nil {
+			logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
 	raw := &unstructured.Unstructured{}
 	raw.SetGroupVersionKind(r.gvk)
@@ -107,6 +133,12 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		logger.V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
 			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
+			if setter, ok := any(obj).(ReconcileStatusSetter); ok {
+				setter.SetDeleteErrorStatus(err)
+				if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
+					err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
+				}
+			}
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		controllerutil.RemoveFinalizer(obj, r.Finalizer)
@@ -138,23 +170,17 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		}
 
 		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
+		if setter, ok := any(obj).(ReconcileStatusSetter); ok {
+			setter.SetUpsertErrorStatus(err)
+			if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
+				err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
+			}
+		}
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
-	if mgr, ok := any(obj).(StatusPatchGenerator); ok {
-		if patch := mgr.GenerateStatusPatch(original); patch != nil {
-			if err := r.Status().Patch(r.DutyContext, obj, patch); err != nil {
-				logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
-				return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
-			}
-		}
-	} else {
-		// TODO: only for backward compatibility
-		// remove later ..
-		if err := r.Status().Update(r.DutyContext, obj); err != nil {
-			logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
-			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
-		}
+	if err := r.updateStatus(ctx, resourceName, obj, original); err != nil {
+		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
 	action := lo.Ternary(isCreated, "Created", "Updated")
