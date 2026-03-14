@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/samber/lo"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
+	k8smeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,12 +30,18 @@ type StatusPatchGenerator interface {
 	GenerateStatusPatch(previousState runtime.Object) client.Patch
 }
 
-// ReconcileStatusSetter allows a CRD to update its own status when a reconcile
-// operation fails. Kopper will call the appropriate method and write the status
-// back to Kubernetes automatically.
-type ReconcileStatusSetter interface {
-	SetUpsertErrorStatus(err error)
-	SetDeleteErrorStatus(err error)
+const (
+	ReadyConditionType = "Ready"
+
+	ReasonSynced        = "Synced"
+	ReasonPersistFailed = "PersistFailed"
+	ReasonDeleteFailed  = "DeleteFailed"
+)
+
+// StatusConditioner allows a CRD to expose its status conditions slice so
+// Kopper can set generic reconcile conditions.
+type StatusConditioner interface {
+	GetStatusConditions() *[]metav1.Condition
 }
 
 // OnUpsertFunc is a function that is called when a resource is created or updated
@@ -106,6 +114,29 @@ func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName str
 	return nil
 }
 
+func (r *Reconciler[T, PT]) setCondition(obj PT, status metav1.ConditionStatus, reason, message string) bool {
+	conditioner, ok := any(obj).(StatusConditioner)
+	if !ok {
+		return false
+	}
+
+	conditions := conditioner.GetStatusConditions()
+	if conditions == nil {
+		return false
+	}
+
+	k8smeta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               ReadyConditionType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: obj.GetGeneration(),
+		LastTransitionTime: metav1.Now(),
+	})
+
+	return true
+}
+
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
 	raw := &unstructured.Unstructured{}
 	raw.SetGroupVersionKind(r.gvk)
@@ -133,8 +164,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		logger.V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
 			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
-			if setter, ok := any(obj).(ReconcileStatusSetter); ok {
-				setter.SetDeleteErrorStatus(err)
+			if r.setCondition(obj, metav1.ConditionFalse, ReasonDeleteFailed, err.Error()) {
 				if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 					err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
 				}
@@ -170,8 +200,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		}
 
 		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
-		if setter, ok := any(obj).(ReconcileStatusSetter); ok {
-			setter.SetUpsertErrorStatus(err)
+		if r.setCondition(obj, metav1.ConditionFalse, ReasonPersistFailed, err.Error()) {
 			if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 				err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
 			}
@@ -179,6 +208,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
+	r.setCondition(obj, metav1.ConditionTrue, ReasonSynced, "")
 	if err := r.updateStatus(ctx, resourceName, obj, original); err != nil {
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
