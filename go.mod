@@ -8,6 +8,7 @@ require (
 	github.com/go-logr/logr v1.4.2
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
 	github.com/jackc/pgx/v5 v5.6.0
+	github.com/samber/lo v1.47.0
 	k8s.io/apimachinery v0.31.1
 	k8s.io/client-go v0.31.1
 	sigs.k8s.io/controller-runtime v0.19.0
@@ -117,7 +118,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/robertkrimen/otto v0.3.0 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
-	github.com/samber/lo v1.47.0 // indirect
 	github.com/samber/oops v1.13.1 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
