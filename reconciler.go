@@ -44,6 +44,12 @@ type StatusConditioner interface {
 	GetStatusConditions() *[]metav1.Condition
 }
 
+// ObservedGenerationSetter allows a CRD to have its top-level
+// status.observedGeneration kept in sync by Kopper on each reconcile.
+type ObservedGenerationSetter interface {
+	SetObservedGeneration(generation int64)
+}
+
 // OnUpsertFunc is a function that is called when a resource is created or updated
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
 
@@ -94,6 +100,14 @@ type Reconciler[T any, PT interface {
 	Finalizer      string
 	Events         record.EventRecorder
 	gvk            schema.GroupVersionKind
+}
+
+func (r *Reconciler[T, PT]) syncObservedGeneration(obj PT) bool {
+	if setter, ok := any(obj).(ObservedGenerationSetter); ok {
+		setter.SetObservedGeneration(obj.GetGeneration())
+		return true
+	}
+	return false
 }
 
 func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName string, obj PT, original runtime.Object) error {
@@ -164,7 +178,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		logger.V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
 			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
-			if r.setCondition(obj, metav1.ConditionFalse, ReasonDeleteFailed, err.Error()) {
+			if r.setCondition(obj, metav1.ConditionFalse, ReasonDeleteFailed, err.Error()) || r.syncObservedGeneration(obj) {
 				if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 					err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
 				}
@@ -200,7 +214,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		}
 
 		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
-		if r.setCondition(obj, metav1.ConditionFalse, ReasonPersistFailed, err.Error()) {
+		if r.setCondition(obj, metav1.ConditionFalse, ReasonPersistFailed, err.Error()) || r.syncObservedGeneration(obj) {
 			if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 				err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
 			}
@@ -209,6 +223,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	}
 
 	r.setCondition(obj, metav1.ConditionTrue, ReasonSynced, "")
+	r.syncObservedGeneration(obj)
 	if err := r.updateStatus(ctx, resourceName, obj, original); err != nil {
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
