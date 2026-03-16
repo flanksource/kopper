@@ -44,6 +44,12 @@ type StatusConditioner interface {
 	GetStatusConditions() *[]metav1.Condition
 }
 
+// ObservedGenerationSetter allows a CRD to have its top-level
+// status.observedGeneration kept in sync by Kopper on each reconcile.
+type ObservedGenerationSetter interface {
+	SetObservedGeneration(generation int64)
+}
+
 // OnUpsertFunc is a function that is called when a resource is created or updated
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
 
@@ -133,6 +139,10 @@ func (r *Reconciler[T, PT]) setCondition(obj PT, status metav1.ConditionStatus, 
 		ObservedGeneration: obj.GetGeneration(),
 		LastTransitionTime: metav1.Now(),
 	})
+
+	if setter, ok := any(obj).(ObservedGenerationSetter); ok {
+		setter.SetObservedGeneration(obj.GetGeneration())
+	}
 
 	return true
 }
