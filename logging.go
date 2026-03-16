@@ -8,6 +8,10 @@ import (
 	"github.com/go-logr/logr"
 )
 
+// All Error logs are emitted
+// When verbosity is set to 2 (-vv) along with property(kopper.logs=true): Warn logs are emitted as well
+// When verbosity is set to 4 (-vvvv) : All logs are emitted
+
 var klog = logger.GetLogger("kopper")
 
 func init() {
