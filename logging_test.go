@@ -11,6 +11,33 @@ import (
 	"github.com/go-logr/logr"
 )
 
+func TestComputeKopperLogLevel(t *testing.T) {
+	tests := []struct {
+		name              string
+		kopperLogsEnabled bool
+		globalLevel       logger.LogLevel
+		expected          logger.LogLevel
+	}{
+		{"default: only errors", false, logger.Info, logger.Error},
+		{"kopper.logs enabled: warn level", true, logger.Info, logger.Warn},
+		{"global level 4: all logs", false, logger.Trace2, logger.Trace2},
+		{"global level 4 with kopper.logs: global wins", true, logger.Trace2, logger.Trace2},
+		{"global level 2 without kopper.logs: still error only", false, logger.Trace, logger.Error},
+		{"global level 2 with kopper.logs: warn", true, logger.Trace, logger.Warn},
+		{"global level 5 beyond trace2: passes through", false, logger.Trace3, logger.Trace3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := computeKopperLogLevel(tt.kopperLogsEnabled, tt.globalLevel)
+			if result != tt.expected {
+				t.Errorf("computeKopperLogLevel(%v, %v) = %v, want %v",
+					tt.kopperLogsEnabled, tt.globalLevel, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestShiftLevel(t *testing.T) {
 	tests := []struct {
 		name     string

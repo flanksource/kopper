@@ -8,6 +8,25 @@ import (
 	"github.com/go-logr/logr"
 )
 
+var klog = logger.GetLogger("kopper")
+
+func init() {
+	klog.SetLogLevel(logger.Error)
+}
+
+// computeKopperLogLevel determines the log level for the kopper logger.
+// Priority: global level >= Trace2 (4) > kopper.logs=true > default (Error).
+// The log.level.kopper property is handled separately by the logger infrastructure.
+func computeKopperLogLevel(kopperLogsEnabled bool, globalLevel logger.LogLevel) logger.LogLevel {
+	if globalLevel >= logger.Trace2 {
+		return globalLevel
+	}
+	if kopperLogsEnabled {
+		return logger.Warn
+	}
+	return logger.Error
+}
+
 // shiftLevel maps slog levels from controller-runtime conventions to
 // flanksource/commons/logger conventions, shifting each level down by
 // one semantic step:
