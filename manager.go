@@ -5,7 +5,6 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-	"github.com/go-logr/logr"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,12 +36,13 @@ func Manager(opts *ManagerOptions) (manager.Manager, error) {
 
 	utilruntime.Must(opts.AddToSchemeFunc(scheme))
 
-	logf.SetLogger(logr.Discard())
+	crLogger := NewControllerRuntimeLogger()
+	logf.SetLogger(crLogger)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:           scheme,
 		LeaderElection:   len(opts.LeaderElectionID) > 0,
 		LeaderElectionID: opts.LeaderElectionID,
-		Logger:           logr.Discard(),
+		Logger:           crLogger,
 		Metrics: ctrlMetrics.Options{
 			BindAddress: "0",
 		},

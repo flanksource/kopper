@@ -114,13 +114,13 @@ func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName str
 	if mgr, ok := any(obj).(StatusPatchGenerator); ok {
 		if patch := mgr.GenerateStatusPatch(original); patch != nil {
 			if err := r.Status().Patch(ctx, obj, patch); err != nil {
-				logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+				klog.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
 				return err
 			}
 		}
 	} else {
 		if err := r.Status().Update(ctx, obj); err != nil {
-			logger.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
+			klog.Errorf("[kopper] failed to update status %s: %v", resourceName, err)
 			return err
 		}
 	}
@@ -164,9 +164,14 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	resourceName := fmt.Sprintf("%s[%s/%s:%s]", r.gvk.Kind, req.Namespace, req.Name, raw.GetUID())
 
+	klog.SetLogLevel(computeKopperLogLevel(
+		r.DutyContext.Properties().On(false, "kopper.logs"),
+		logger.GetLogger().GetLevel(),
+	))
+
 	obj := PT(new(T))
 	if err := fromUnstructured(raw.Object, obj); err != nil {
-		logger.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
+		klog.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
 		r.Events.Event(raw, "Warning", "MalformedResource",
 			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
 		return ctrl.Result{}, fmt.Errorf("failed to convert unstructured to typed object: %w", err)
@@ -175,9 +180,9 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	original := obj.DeepCopyObject()
 
 	if !obj.GetDeletionTimestamp().IsZero() {
-		logger.V(2).Infof("[kopper] deleting %s", resourceName)
+		klog.V(2).Infof("[kopper] deleting %s", resourceName)
 		if err := r.OnDeleteFunc(r.DutyContext, string(obj.GetUID())); err != nil {
-			logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
+			klog.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
 			if r.setCondition(obj, metav1.ConditionFalse, ReasonDeleteFailed, err.Error()) || r.syncObservedGeneration(obj) {
 				if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 					err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
@@ -194,7 +199,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	if !controllerutil.ContainsFinalizer(obj, r.Finalizer) {
 		controllerutil.AddFinalizer(obj, r.Finalizer)
 		if err := r.Update(ctx, obj); err != nil {
-			logger.Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
+			klog.Errorf("[kopper] failed to update finalizers %s: %v", resourceName, err)
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		isCreated = true
@@ -202,10 +207,10 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
 		if isUniqueConstraintError(err) && r.OnConflictFunc != nil {
-			logger.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
+			klog.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
 
 			if err := r.OnConflictFunc(r.DutyContext, obj); err != nil {
-				logger.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
+				klog.Errorf("[kopper] failed to delete %s: %v", resourceName, err)
 				return ctrl.Result{Requeue: true, RequeueAfter: time.Minute * 5}, err
 			}
 
@@ -213,7 +218,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 15}, err
 		}
 
-		logger.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
+		klog.Errorf("[kopper] failed to upsert %s: %v", resourceName, err)
 		if r.setCondition(obj, metav1.ConditionFalse, ReasonPersistFailed, err.Error()) || r.syncObservedGeneration(obj) {
 			if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
 				err = errors.Join(err, fmt.Errorf("failed to update status for %s: %w", resourceName, statusErr))
@@ -229,7 +234,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	}
 
 	action := lo.Ternary(isCreated, "Created", "Updated")
-	logger.V(2).Infof("[kopper] %s %s", action, resourceName)
+	klog.V(2).Infof("[kopper] %s %s", action, resourceName)
 	r.Events.Event(obj, "Normal", action, fmt.Sprintf("%s %s", action, resourceName))
 	return ctrl.Result{}, nil
 }
