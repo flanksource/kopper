@@ -50,6 +50,14 @@ type ObservedGenerationSetter interface {
 	SetObservedGeneration(generation int64)
 }
 
+// ObservedGenerationGetter allows Kopper to detect whether the current
+// metadata.generation has already been reconciled into status.observedGeneration.
+// If a CRD does not implement this interface, Kopper will not emit Updated
+// events based on observedGeneration.
+type ObservedGenerationGetter interface {
+	GetObservedGeneration() int64
+}
+
 // OnUpsertFunc is a function that is called when a resource is created or updated
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
 
@@ -108,6 +116,14 @@ func (r *Reconciler[T, PT]) syncObservedGeneration(obj PT) bool {
 		return true
 	}
 	return false
+}
+
+func (r *Reconciler[T, PT]) isObservedGenerationOutdated(obj PT) bool {
+	getter, ok := any(obj).(ObservedGenerationGetter)
+	if !ok {
+		return false
+	}
+	return getter.GetObservedGeneration() != obj.GetGeneration()
 }
 
 func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName string, obj PT, original runtime.Object) error {
@@ -205,6 +221,8 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		isCreated = true
 	}
 
+	isUpdated := r.isObservedGenerationOutdated(obj)
+
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
 		if isUniqueConstraintError(err) && r.OnConflictFunc != nil {
 			klog.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
@@ -233,9 +251,11 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 	}
 
-	action := lo.Ternary(isCreated, "Created", "Updated")
-	klog.V(2).Infof("[kopper] %s %s", action, resourceName)
-	r.Events.Event(obj, "Normal", action, fmt.Sprintf("%s %s", action, resourceName))
+	if isCreated || isUpdated {
+		action := lo.Ternary(isCreated, "Created", "Updated")
+		klog.V(2).Infof("[kopper] %s %s", action, resourceName)
+		r.Events.Event(obj, "Normal", action, fmt.Sprintf("%s %s", action, resourceName))
+	}
 	return ctrl.Result{}, nil
 }
 
