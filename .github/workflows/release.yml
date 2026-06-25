@@ -3,26 +3,25 @@ on:
   push:
     branches:
       - main
+
+permissions: {} # start with no permission
+
 jobs:
-  semantic-release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: codfish/semantic-release-action@v2
-        id: semantic
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    outputs:
-      release-version: ${{ steps.semantic.outputs.release-version }}
-      new-release-published: ${{ steps.semantic.outputs.new-release-published }}
+  create-release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: flanksource/action-workflows/.github/workflows/create-release.yml@a7df3dcb783c34338e46318364e99c0ada62bcd9
 
   bump-clients:
+    permissions: {}
     runs-on: ubuntu-latest
-    needs: [semantic-release]
-    if: needs.semantic-release.outputs.new-release-published == 'true'
+    needs: [create-release]
+    if: needs.create-release.outputs.published == 'true'
     strategy:
       matrix:
-        repos: ['incident-commander']
+        repos: ["incident-commander"]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -33,10 +32,13 @@ jobs:
         with:
           go-version: v1.23.x
       - name: Create commits
+        env:
+          KOPPER_VERSION: ${{ needs.create-release.outputs.version }}
         run: |
           # Sleep to let index refresh
           sleep 60
-          go get github.com/flanksource/kopper@v${{ needs.semantic-release.outputs.release-version }}
+          [[ "$KOPPER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "Invalid version: $KOPPER_VERSION"; exit 1; }
+          go get "github.com/flanksource/kopper@v${KOPPER_VERSION}"
           go mod tidy
           if [ -d "hack/generate-schemas" ]; then
             cd hack/generate-schemas && go mod tidy
@@ -45,10 +47,10 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v4
         with:
-          branch: 'bump-kopper-auto-pr'
-          commit-message: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-          title: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-          committer: 'Flankbot <flankbot@users.noreply.github.com>'
+          branch: "bump-kopper-auto-pr"
+          commit-message: "chore: bump kopper to v${{ needs.create-release.outputs.version }}"
+          title: "chore: bump kopper to v${{ needs.create-release.outputs.version }}"
+          committer: "Flankbot <flankbot@users.noreply.github.com>"
           token: ${{ secrets.FLANKBOT }}
           labels: dependencies
           delete-branch: true
