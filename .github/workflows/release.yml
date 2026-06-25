@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: codfish/semantic-release-action@v2
+      - uses: codfish/semantic-release-action@6abd188d2458e2fd6c99073454f6cc49196362e8 # v5.0.0
         id: semantic
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -22,7 +22,7 @@ jobs:
     if: needs.semantic-release.outputs.new-release-published == 'true'
     strategy:
       matrix:
-        repos: ['incident-commander']
+        repos: ["incident-commander"]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -45,10 +45,10 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v4
         with:
-          branch: 'bump-kopper-auto-pr'
-          commit-message: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-          title: 'chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}'
-          committer: 'Flankbot <flankbot@users.noreply.github.com>'
+          branch: "bump-kopper-auto-pr"
+          commit-message: "chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}"
+          title: "chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}"
+          committer: "Flankbot <flankbot@users.noreply.github.com>"
           token: ${{ secrets.FLANKBOT }}
           labels: dependencies
           delete-branch: true
