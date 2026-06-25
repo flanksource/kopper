@@ -4,22 +4,13 @@ on:
     branches:
       - main
 jobs:
-  semantic-release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: codfish/semantic-release-action@6abd188d2458e2fd6c99073454f6cc49196362e8 # v5.0.0
-        id: semantic
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    outputs:
-      release-version: ${{ steps.semantic.outputs.release-version }}
-      new-release-published: ${{ steps.semantic.outputs.new-release-published }}
+  create-release:
+    uses: flanksource/action-workflows/.github/workflows/create-release.yml@a7df3dcb783c34338e46318364e99c0ada62bcd9
 
   bump-clients:
     runs-on: ubuntu-latest
-    needs: [semantic-release]
-    if: needs.semantic-release.outputs.new-release-published == 'true'
+    needs: [create-release]
+    if: needs.create-release.outputs.published == 'true'
     strategy:
       matrix:
         repos: ["incident-commander"]
@@ -36,7 +27,7 @@ jobs:
         run: |
           # Sleep to let index refresh
           sleep 60
-          go get github.com/flanksource/kopper@v${{ needs.semantic-release.outputs.release-version }}
+          go get github.com/flanksource/kopper@v${{ needs.create-release.outputs.version }}
           go mod tidy
           if [ -d "hack/generate-schemas" ]; then
             cd hack/generate-schemas && go mod tidy
@@ -46,8 +37,8 @@ jobs:
         uses: peter-evans/create-pull-request@v4
         with:
           branch: "bump-kopper-auto-pr"
-          commit-message: "chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}"
-          title: "chore: bump kopper to v${{ needs.semantic-release.outputs.release-version }}"
+          commit-message: "chore: bump kopper to v${{ needs.create-release.outputs.version }}"
+          title: "chore: bump kopper to v${{ needs.create-release.outputs.version }}"
           committer: "Flankbot <flankbot@users.noreply.github.com>"
           token: ${{ secrets.FLANKBOT }}
           labels: dependencies
