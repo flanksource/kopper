@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -85,7 +85,7 @@ func SetupReconciler[T any, PT interface {
 		OnDeleteFunc:   onDelete,
 		OnConflictFunc: onConflict,
 		Finalizer:      finalizer,
-		Events:         mgr.GetEventRecorderFor(finalizer),
+		Events:         mgr.GetEventRecorder(finalizer),
 	}
 
 	if err := r.SetupWithManager(mgr); err != nil {
@@ -106,7 +106,7 @@ type Reconciler[T any, PT interface {
 	OnDeleteFunc   OnDeleteFunc
 	OnConflictFunc OnConflictFunc[PT]
 	Finalizer      string
-	Events         record.EventRecorder
+	Events         events.EventRecorder
 	gvk            schema.GroupVersionKind
 }
 
@@ -188,8 +188,8 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	obj := PT(new(T))
 	if err := fromUnstructured(raw.Object, obj); err != nil {
 		klog.Errorf("[kopper] malformed resource %s: %v", resourceName, err)
-		r.Events.Event(raw, "Warning", "MalformedResource",
-			fmt.Sprintf("Resource spec does not match expected schema: %v", err))
+		r.Events.Eventf(raw, nil, "Warning", "MalformedResource", "MalformedResource",
+			"Resource spec does not match expected schema: %v", err)
 		return ctrl.Result{}, fmt.Errorf("failed to convert unstructured to typed object: %w", err)
 	}
 
@@ -207,7 +207,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 			return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, err
 		}
 		controllerutil.RemoveFinalizer(obj, r.Finalizer)
-		r.Events.Event(obj, "Normal", "Deleted", fmt.Sprintf("Deleted %s", resourceName))
+		r.Events.Eventf(obj, nil, "Normal", "Deleted", "Deleted", "Deleted %s", resourceName)
 		return ctrl.Result{}, r.Update(ctx, obj)
 	}
 
@@ -254,7 +254,7 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	if isCreated || isUpdated {
 		action := lo.Ternary(isCreated, "Created", "Updated")
 		klog.V(2).Infof("[kopper] %s %s", action, resourceName)
-		r.Events.Event(obj, "Normal", action, fmt.Sprintf("%s %s", action, resourceName))
+		r.Events.Eventf(obj, nil, "Normal", action, action, "%s %s", action, resourceName)
 	}
 	return ctrl.Result{}, nil
 }
