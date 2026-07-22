@@ -5,7 +5,7 @@ go 1.26.1
 replace github.com/flanksource/kopper => ..
 
 require (
-	github.com/flanksource/duty v1.0.1347
+	github.com/flanksource/duty v1.0.1352
 	github.com/flanksource/kopper v0.0.0-00010101000000-000000000000
 	k8s.io/api v0.36.1
 	k8s.io/apiextensions-apiserver v0.36.1
@@ -58,6 +58,7 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
+	github.com/exaring/otelpgx v0.11.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/flanksource/clicky v1.21.18 // indirect
 	github.com/flanksource/commons v1.53.1 // indirect
