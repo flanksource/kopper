@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/flanksource/commons v1.53.1
-	github.com/flanksource/duty v1.0.1347
+	github.com/flanksource/duty v1.0.1352
 	github.com/go-logr/logr v1.4.3
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
 	github.com/jackc/pgx/v5 v5.10.0
@@ -58,8 +58,9 @@ require (
 	github.com/emirpasic/gods/v2 v2.0.0-alpha // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
+	github.com/exaring/otelpgx v0.11.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/flanksource/clicky v1.21.18 // indirect
+	github.com/flanksource/clicky v1.21.40 // indirect
 	github.com/flanksource/gomplate/v3 v3.24.84 // indirect
 	github.com/flanksource/is-healthy v1.0.88 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
@@ -187,6 +188,7 @@ require (
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/excelize/v2 v2.11.0 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	github.com/yuin/goldmark v1.7.16 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
