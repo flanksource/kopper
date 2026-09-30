@@ -22,6 +22,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 // Custom Resources that uses "status" subresource
@@ -58,7 +61,8 @@ type ObservedGenerationGetter interface {
 	GetObservedGeneration() int64
 }
 
-// OnUpsertFunc is a function that is called when a resource is created or updated
+// OnUpsertFunc is a function that is called when a resource is created or updated.
+// Returning a ConditionError marks the resource Ready=False with its reason instead of retrying.
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
 
 // OnDeleteFunc is a function that is called when a resource is deleted
@@ -108,6 +112,7 @@ type Reconciler[T any, PT interface {
 	Finalizer      string
 	Events         events.EventRecorder
 	gvk            schema.GroupVersionKind
+	resync         chan event.GenericEvent
 }
 
 func (r *Reconciler[T, PT]) syncObservedGeneration(obj PT) bool {
@@ -145,12 +150,7 @@ func (r *Reconciler[T, PT]) updateStatus(ctx gocontext.Context, resourceName str
 }
 
 func (r *Reconciler[T, PT]) setCondition(obj PT, status metav1.ConditionStatus, reason, message string) bool {
-	conditioner, ok := any(obj).(StatusConditioner)
-	if !ok {
-		return false
-	}
-
-	conditions := conditioner.GetStatusConditions()
+	conditions := r.getConditions(obj)
 	if conditions == nil {
 		return false
 	}
@@ -165,6 +165,26 @@ func (r *Reconciler[T, PT]) setCondition(obj PT, status metav1.ConditionStatus, 
 	})
 
 	return true
+}
+
+func (r *Reconciler[T, PT]) getConditions(obj PT) *[]metav1.Condition {
+	conditioner, ok := any(obj).(StatusConditioner)
+	if !ok {
+		return nil
+	}
+	return conditioner.GetStatusConditions()
+}
+
+// isReadyConditionCurrent reports whether the Ready condition already has the given status, reason and message
+// for the current generation.
+func (r *Reconciler[T, PT]) isReadyConditionCurrent(obj PT, status metav1.ConditionStatus, reason, message string) bool {
+	conditions := r.getConditions(obj)
+	if conditions == nil {
+		return false
+	}
+	c := k8smeta.FindStatusCondition(*conditions, ReadyConditionType)
+	return c != nil && c.Status == status && c.Reason == reason && c.Message == message &&
+		c.ObservedGeneration == obj.GetGeneration()
 }
 
 func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -224,6 +244,24 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	isUpdated := r.isObservedGenerationOutdated(obj)
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
+		if ce, ok := AsConditionError(err); ok {
+			message := ce.Error()
+			unchanged := r.isReadyConditionCurrent(obj, metav1.ConditionFalse, ce.Reason, message)
+			klog.V(2).Infof("[kopper] %s is not ready (%s): %s", resourceName, ce.Reason, message)
+
+			r.setCondition(obj, metav1.ConditionFalse, ce.Reason, message)
+			r.syncObservedGeneration(obj)
+			if statusErr := r.updateStatus(ctx, resourceName, obj, original); statusErr != nil {
+				return ctrl.Result{Requeue: true, RequeueAfter: 2 * time.Minute}, statusErr
+			}
+
+			if !unchanged {
+				r.Events.Eventf(obj, nil, "Warning", ce.Reason, ce.Reason, "%s", message)
+			}
+			// Not retried: the resource is re-evaluated when it changes, or on Resync/Enqueue.
+			return ctrl.Result{}, nil
+		}
+
 		if isUniqueConstraintError(err) && r.OnConflictFunc != nil {
 			klog.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
 
@@ -278,8 +316,11 @@ func (r *Reconciler[T, PT]) SetupWithManager(mgr ctrl.Manager) error {
 	raw := &unstructured.Unstructured{}
 	raw.SetGroupVersionKind(gvk)
 
+	r.resync = make(chan event.GenericEvent, resyncBufferSize)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(raw).
+		WatchesRawSource(source.Channel(r.resync, &handler.EnqueueRequestForObject{})).
 		Complete(r)
 }
 
