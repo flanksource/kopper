@@ -63,3 +63,18 @@ requests made before the manager starts. The controller workqueue deduplicates
 pending requests; a request made during reconciliation schedules another pass.
 Missing resources are ignored. Requests are in memory only and are not processed
 after the manager stops.
+
+Use `Resync` when a dependency change affects all resources of a kind, or a
+namespace/label-selected subset:
+
+```go
+if err := roles.Resync(ctx, client.InNamespace("staging"), client.MatchingLabels{"team": "sre"}); err != nil {
+    return err
+}
+return roles.Resync(ctx)
+```
+
+`Resync` lists resources and calls `Enqueue` for each. It returns list and context
+cancellation errors, or an error if the reconciler has not been set up. Listing
+can wait for the API/cache, but enqueueing does not wait for queue capacity.
+Cancellation does not remove requests already queued.

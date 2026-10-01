@@ -158,6 +158,31 @@ func (r *Reconciler[T, PT]) Enqueue(namespace, name string) {
 	r.enqueue.add(ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}})
 }
 
+// Resync lists and enqueues resources of this kind after a dependency changes.
+// List options can restrict the namespace or labels. Cancellation can leave
+// earlier resources queued; requests never wait for queue capacity.
+func (r *Reconciler[T, PT]) Resync(ctx gocontext.Context, opts ...client.ListOption) error {
+	if r.enqueue == nil {
+		return fmt.Errorf("reconciler is not set up with a manager")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(r.gvk.GroupVersion().WithKind(r.gvk.Kind + "List"))
+	if err := r.List(ctx, list, opts...); err != nil {
+		return fmt.Errorf("failed to list %s: %w", r.gvk.Kind, err)
+	}
+	for _, item := range list.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r.Enqueue(item.GetNamespace(), item.GetName())
+	}
+	return ctx.Err()
+}
+
 // enqueueSource shares the controller queue with copies returned by SetupReconciler.
 // Until the controller starts, pending requests are deduplicated under the same lock.
 type enqueueSource struct {
