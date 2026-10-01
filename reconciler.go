@@ -36,6 +36,7 @@ const (
 	ReasonSynced        = "Synced"
 	ReasonPersistFailed = "PersistFailed"
 	ReasonDeleteFailed  = "DeleteFailed"
+	ReasonInvalid       = "Invalid"
 )
 
 // StatusConditioner allows a CRD to expose its status conditions slice so
@@ -60,6 +61,39 @@ type ObservedGenerationGetter interface {
 
 // OnUpsertFunc is a function that is called when a resource is created or updated
 type OnUpsertFunc[PT client.Object] func(context.Context, PT) error
+
+// NotReadyError reports a resource that was persisted but is not yet in effect.
+// It sets Ready=False without counting as a reconcile failure. An empty Reason
+// defaults to Invalid. Message overrides Err's text when both are provided.
+type NotReadyError struct {
+	Reason       string
+	Message      string
+	Err          error
+	RequeueAfter time.Duration
+}
+
+func (e *NotReadyError) Error() string {
+	if e.Message == "" && e.Err != nil {
+		return e.Err.Error()
+	}
+	return e.Message
+}
+
+// Unwrap preserves the underlying error for errors.Is and errors.As.
+func (e *NotReadyError) Unwrap() error {
+	return e.Err
+}
+
+// NotReady reports a persisted, inactive resource with a formatted status message.
+// It supports %w to preserve an underlying error and defaults an empty reason to
+// Invalid. Use NotReadyError directly to request a timed retry.
+func NotReady(reason, format string, args ...any) error {
+	if reason == "" {
+		reason = ReasonInvalid
+	}
+	err := fmt.Errorf(format, args...)
+	return &NotReadyError{Reason: reason, Message: err.Error(), Err: err}
+}
 
 // OnDeleteFunc is a function that is called when a resource is deleted
 type OnDeleteFunc func(context.Context, string) error
@@ -224,6 +258,35 @@ func (r *Reconciler[T, PT]) Reconcile(ctx gocontext.Context, req ctrl.Request) (
 	isUpdated := r.isObservedGenerationOutdated(obj)
 
 	if err := r.OnUpsertFunc(r.DutyContext, obj); err != nil {
+		var notReady *NotReadyError
+		if errors.As(err, &notReady) {
+			reason := notReady.Reason
+			if reason == "" {
+				reason = ReasonInvalid
+			}
+			message := notReady.Error()
+			conditionChanged := false
+			if conditioner, ok := original.(StatusConditioner); ok {
+				if conditions := conditioner.GetStatusConditions(); conditions != nil {
+					previous := k8smeta.FindStatusCondition(*conditions, ReadyConditionType)
+					conditionChanged = previous == nil || previous.Status != metav1.ConditionFalse || previous.Reason != reason
+				}
+			}
+
+			conditionSet := r.setCondition(obj, metav1.ConditionFalse, reason, message)
+			generationSet := r.syncObservedGeneration(obj)
+			if conditionSet || generationSet {
+				if err := r.updateStatus(ctx, resourceName, obj, original); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			if conditionChanged {
+				r.Events.Eventf(obj, nil, "Warning", reason, "NotReady", "%s", message)
+			}
+			klog.V(2).Infof("[kopper] not ready %s: %s", resourceName, message)
+			return ctrl.Result{RequeueAfter: notReady.RequeueAfter}, nil
+		}
+
 		if isUniqueConstraintError(err) && r.OnConflictFunc != nil {
 			klog.V(2).Infof("[kopper] deleting %s due to unique constraint violation", resourceName)
 
