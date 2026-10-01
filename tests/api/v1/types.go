@@ -4,6 +4,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -45,7 +46,28 @@ type Header struct {
 }
 
 type TestResourceStatus struct {
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// GetStatusConditions exposes conditions managed by Kopper.
+func (in *TestResource) GetStatusConditions() *[]metav1.Condition {
+	return &in.Status.Conditions
+}
+
+// SetObservedGeneration records the generation processed by Kopper.
+func (in *TestResource) SetObservedGeneration(generation int64) {
+	in.Status.ObservedGeneration = generation
+}
+
+// GetObservedGeneration lets Kopper detect spec updates.
+func (in *TestResource) GetObservedGeneration() int64 {
+	return in.Status.ObservedGeneration
+}
+
+// GenerateStatusPatch exercises Kopper's consumer-provided status patch path.
+func (in *TestResource) GenerateStatusPatch(previous runtime.Object) client.Patch {
+	return client.MergeFrom(previous.(*TestResource))
 }
 
 // +kubebuilder:object:root=true
@@ -63,6 +85,9 @@ func (in *TestResource) DeepCopyInto(out *TestResource) {
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
 	out.Status = in.Status
+	if in.Status.Conditions != nil {
+		out.Status.Conditions = append([]metav1.Condition{}, in.Status.Conditions...)
+	}
 }
 
 // DeepCopy creates a deep copy of TestResource.
