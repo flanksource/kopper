@@ -43,3 +43,23 @@ return &kopper.NotReadyError{
 
 Returning `nil` on a later upsert restores `Ready=True` with reason `Synced`.
 Ordinary errors, unique-constraint handling, and deletion behavior are unchanged.
+
+## Reconcile after a dependency changes
+
+Keep the reconciler returned by `SetupReconciler` and enqueue affected resources
+when a dependency is stored or deleted:
+
+```go
+roles, err := kopper.SetupReconciler(ctx, mgr, persistRole, deleteRole, deleteStaleRole, "roles.example.com")
+if err != nil {
+    return err
+}
+roles.Enqueue("staging", "operators")
+```
+
+`Enqueue` does not change the resource's spec or generation. After setup it is safe
+to call from concurrent goroutines, does not wait for queue capacity, and retains
+requests made before the manager starts. The controller workqueue deduplicates
+pending requests; a request made during reconciliation schedules another pass.
+Missing resources are ignored. Requests are in memory only and are not processed
+after the manager stops.
