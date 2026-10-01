@@ -4,6 +4,7 @@ import (
 	gocontext "context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/flanksource/commons/logger"
@@ -17,7 +18,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -142,6 +145,46 @@ type Reconciler[T any, PT interface {
 	Finalizer      string
 	Events         events.EventRecorder
 	gvk            schema.GroupVersionKind
+	enqueue        *enqueueSource
+}
+
+// Enqueue requests reconciliation without changing the object. After setup,
+// calls are safe from any goroutine and do not wait for queue capacity.
+// Requests made before manager startup are retained; missing objects are ignored.
+func (r *Reconciler[T, PT]) Enqueue(namespace, name string) {
+	if r.enqueue == nil {
+		return
+	}
+	r.enqueue.add(ctrl.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}})
+}
+
+// enqueueSource shares the controller queue with copies returned by SetupReconciler.
+// Until the controller starts, pending requests are deduplicated under the same lock.
+type enqueueSource struct {
+	mu      sync.Mutex
+	queue   workqueue.TypedRateLimitingInterface[ctrl.Request]
+	pending map[ctrl.Request]struct{}
+}
+
+func (s *enqueueSource) Start(_ gocontext.Context, queue workqueue.TypedRateLimitingInterface[ctrl.Request]) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queue = queue
+	for req := range s.pending {
+		queue.Add(req)
+	}
+	s.pending = nil
+	return nil
+}
+
+func (s *enqueueSource) add(req ctrl.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.queue == nil {
+		s.pending[req] = struct{}{}
+		return
+	}
+	s.queue.Add(req)
 }
 
 func (r *Reconciler[T, PT]) syncObservedGeneration(obj PT) bool {
@@ -341,8 +384,11 @@ func (r *Reconciler[T, PT]) SetupWithManager(mgr ctrl.Manager) error {
 	raw := &unstructured.Unstructured{}
 	raw.SetGroupVersionKind(gvk)
 
+	r.enqueue = &enqueueSource{pending: make(map[ctrl.Request]struct{})}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(raw).
+		WatchesRawSource(r.enqueue).
 		Complete(r)
 }
 
